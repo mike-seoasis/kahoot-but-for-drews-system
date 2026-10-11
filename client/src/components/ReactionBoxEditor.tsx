@@ -1,7 +1,7 @@
-import { useState, useEffect, memo } from 'react';
+import { useState, useEffect, useRef, memo } from 'react';
 import { useStore } from '../store';
 import { getSocket } from '../socket';
-import { C2S } from '../shared/types';
+import { C2S, MAX_BOX_VALUES, MAX_NAME_LENGTH, REACTION_DIE, rollReaction } from '../shared/types';
 
 interface Props {
   boxId: number;
@@ -13,71 +13,76 @@ export default memo(function ReactionBoxEditor({ boxId }: Props) {
   const [label, setLabel] = useState('');
   const [bonusStr, setBonusStr] = useState('');
   const [armorStr, setArmorStr] = useState('');
+  // A reroll that keeps the current value is still a reroll. Without a tell,
+  // clicking a die that does not move reads as a dead button.
+  const [rolling, setRolling] = useState<number | null>(null);
+  const rollTimer = useRef<number | undefined>(undefined);
   const socket = getSocket();
 
+  useEffect(() => () => window.clearTimeout(rollTimer.current), []);
+
   useEffect(() => {
-    if (box) {
-      setBonusStr(box.bonus === null || box.bonus === undefined ? '' : String(box.bonus));
-      setArmorStr(box.armor === null || box.armor === undefined ? '' : String(box.armor));
-    }
+    if (!box) return;
+    setBonusStr(box.bonus == null ? '' : String(box.bonus));
+    setArmorStr(box.armor == null ? '' : String(box.armor));
   }, [box?.bonus, box?.armor]);
 
   if (!box) return null;
 
-  const maxVal = box.values.length > 0 ? Math.max(...box.values) : null;
+  const best = box.values.length ? Math.max(...box.values) : null;
+  const emit = (patch: Record<string, unknown>) =>
+    socket?.emit(C2S.DM_BOX_UPDATE, { boxId, ...patch });
 
-  const startEdit = () => {
-    setLabel(box.label);
-    setEditing(true);
+  /**
+   * Dice are nudged and rerolled constantly, and waiting on the server round
+   * trip for each one felt sluggish. Paint the new value at once; the
+   * broadcast that follows agrees with it.
+   */
+  const setValues = (values: number[]) => {
+    useStore.getState().setBoxValues(boxId, values);
+    emit({ values });
   };
 
   const saveLabel = () => {
-    if (label.trim() && label.trim() !== box.label) {
-      socket?.emit(C2S.DM_BOX_UPDATE, { boxId, label: label.trim() });
-    }
+    const clean = label.trim();
+    if (clean && clean !== box.label) emit({ label: clean });
     setEditing(false);
   };
 
-  const addValue = () => {
-    const newVal = Math.floor(Math.random() * 20) + 1;
-    socket?.emit(C2S.DM_BOX_UPDATE, { boxId, values: [...box.values, newVal] });
+  const addValue = () => setValues([...box.values, rollReaction()]);
+  const removeValue = (i: number) => setValues(box.values.filter((_, k) => k !== i));
+
+  const adjustValue = (i: number, delta: number) => {
+    const next = [...box.values];
+    next[i] = Math.max(1, Math.min(REACTION_DIE, next[i] + delta));
+    setValues(next);
   };
 
-  const removeValue = (index: number) => {
-    const newValues = box.values.filter((_, i) => i !== index);
-    socket?.emit(C2S.DM_BOX_UPDATE, { boxId, values: newValues });
+  /**
+   * Clicking a die rerolls it on the spot, and the new roll only takes if it
+   * came up lower — a held reaction can be knocked down but never talked up.
+   * The end-of-round reroll is the opposite and is free to go either way.
+   */
+  const rerollValue = (i: number) => {
+    const next = [...box.values];
+    next[i] = Math.min(next[i], rollReaction());
+    setValues(next);
+
+    // Retrigger the fade even on a rapid second click of the same die.
+    setRolling(null);
+    window.clearTimeout(rollTimer.current);
+    requestAnimationFrame(() => setRolling(i));
+    rollTimer.current = window.setTimeout(() => setRolling(null), 1150);
   };
 
-  const adjustValue = (index: number, delta: number) => {
-    const newValues = [...box.values];
-    newValues[index] = Math.max(1, Math.min(99, newValues[index] + delta));
-    socket?.emit(C2S.DM_BOX_UPDATE, { boxId, values: newValues });
-  };
-
-  const rerollValue = (index: number) => {
-    const newValues = [...box.values];
-    newValues[index] = Math.floor(Math.random() * 20) + 1;
-    socket?.emit(C2S.DM_BOX_UPDATE, { boxId, values: newValues });
-  };
-
-  const saveBonus = () => {
-    const trimmed = bonusStr.trim();
-    const newVal = trimmed === '' ? null : parseInt(trimmed, 10);
-    if (trimmed !== '' && isNaN(newVal as number)) return;
-    socket?.emit(C2S.DM_BOX_UPDATE, { boxId, bonus: newVal });
-  };
-
-  const saveArmor = () => {
-    const trimmed = armorStr.trim();
-    const newVal = trimmed === '' ? null : parseInt(trimmed, 10);
-    if (trimmed !== '' && isNaN(newVal as number)) return;
-    socket?.emit(C2S.DM_BOX_UPDATE, { boxId, armor: newVal });
-  };
-
-  const deleteBox = () => {
-    if (confirm(`Delete "${box.label}"?`)) {
-      socket?.emit(C2S.DM_BOX_DELETE, { boxId });
+  const saveNumber = (raw: string, key: 'bonus' | 'armor') => {
+    const trimmed = raw.trim();
+    if (trimmed === '' || trimmed === '-') {
+      emit({ [key]: null });
+      return;
     }
+    const parsed = parseInt(trimmed, 10);
+    if (!Number.isNaN(parsed)) emit({ [key]: parsed });
   };
 
   return (
@@ -91,18 +96,43 @@ export default memo(function ReactionBoxEditor({ boxId }: Props) {
             onBlur={saveLabel}
             onKeyDown={(e) => e.key === 'Enter' && saveLabel()}
             autoFocus
-            maxLength={40}
+            maxLength={MAX_NAME_LENGTH}
           />
         ) : (
-          <div className="box-label clickable" onClick={startEdit}>{box.label}</div>
+          <div
+            className="box-label clickable"
+            onClick={() => {
+              setLabel(box.label);
+              setEditing(true);
+            }}
+          >
+            {box.label}
+          </div>
         )}
-        <button className="btn btn-ghost btn-tiny" onClick={deleteBox}>×</button>
+        <button
+          className="btn btn-ghost btn-tiny"
+          title="Delete box"
+          onClick={() => {
+            if (confirm(`Delete "${box.label}"?`)) socket?.emit(C2S.DM_BOX_DELETE, { boxId });
+          }}
+        >
+          ×
+        </button>
       </div>
 
       <div className="box-values-edit">
         {box.values.map((v, i) => (
-          <div key={i} className={`value-chip ${v === maxVal ? 'value-chip-max' : ''}`}>
-            <button className="adj-btn" onClick={() => adjustValue(i, -1)}>−</button>
+          <div
+            key={i}
+            className={
+              'value-chip' +
+              (v === best ? ' value-chip-max' : '') +
+              (rolling === i ? ' value-chip-rolling' : '')
+            }
+          >
+            <button className="adj-btn" onClick={() => adjustValue(i, -1)} aria-label="Lower">
+              −
+            </button>
             <button
               type="button"
               className="value-num value-num-reroll"
@@ -111,13 +141,24 @@ export default memo(function ReactionBoxEditor({ boxId }: Props) {
               aria-label={`Reroll ${v}`}
             >
               <span className="value-num-text">{v}</span>
-              <span className="value-num-hint">reroll</span>
             </button>
-            <button className="adj-btn" onClick={() => adjustValue(i, 1)}>+</button>
-            <button className="adj-btn remove-btn" onClick={() => removeValue(i)}>×</button>
+            <button className="adj-btn" onClick={() => adjustValue(i, 1)} aria-label="Raise">
+              +
+            </button>
+            <button
+              className="adj-btn remove-btn"
+              onClick={() => removeValue(i)}
+              aria-label="Remove die"
+            >
+              ×
+            </button>
           </div>
         ))}
-        <button className="btn btn-small add-value-btn" onClick={addValue}>+ Value</button>
+        {box.values.length < MAX_BOX_VALUES && (
+          <button className="btn btn-small add-value-btn" onClick={addValue}>
+            + d{REACTION_DIE}
+          </button>
+        )}
       </div>
 
       <div className="box-meta-row">
@@ -126,15 +167,14 @@ export default memo(function ReactionBoxEditor({ boxId }: Props) {
           <input
             type="text"
             inputMode="numeric"
-            pattern="-?[0-9]*"
             placeholder="—"
             value={bonusStr}
             onChange={(e) => {
               const v = e.target.value;
-              if (v === '' || v === '-' || /^-?\d+$/.test(v)) setBonusStr(v);
+              if (v === '' || v === '-' || /^-?\d{1,2}$/.test(v)) setBonusStr(v);
             }}
-            onBlur={saveBonus}
-            onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
+            onBlur={() => saveNumber(bonusStr, 'bonus')}
+            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
             className="box-meta-input"
           />
         </label>
@@ -143,24 +183,21 @@ export default memo(function ReactionBoxEditor({ boxId }: Props) {
           <input
             type="text"
             inputMode="numeric"
-            pattern="[0-9]*"
             placeholder="—"
             value={armorStr}
             onChange={(e) => {
               const v = e.target.value;
-              if (v === '' || /^\d+$/.test(v)) setArmorStr(v);
+              if (v === '' || /^\d{1,2}$/.test(v)) setArmorStr(v);
             }}
-            onBlur={saveArmor}
-            onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
+            onBlur={() => saveNumber(armorStr, 'armor')}
+            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
             className="box-meta-input"
           />
         </label>
       </div>
 
       {box.previousValues.length > 0 && (
-        <div className="box-previous">
-          prev: {box.previousValues.join(', ')}
-        </div>
+        <div className="box-previous">prev: {box.previousValues.join(', ')}</div>
       )}
     </div>
   );

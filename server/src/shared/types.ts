@@ -1,43 +1,171 @@
-export type TokenKind = 'main' | 'custom' | 'bonus' | 'npc';
+/* ------------------------------------------------------------------ *
+ * The Clock — shared contract between server and client.
+ * Ten wedges, fixed layout, clockwise from wedge 1.
+ * ------------------------------------------------------------------ */
 
-export type PlayerTokenKind = Exclude<TokenKind, 'npc'>;
+export type WedgeType = 'player' | 'enemy' | 'status' | 'environment';
 
-export interface ReactionBox {
+export interface WedgeDef {
+  wedge: number;
+  type: WedgeType;
+}
+
+/**
+ * Layout is fixed forever. Only the entry point moves.
+ *
+ * Enemies act immediately after both Status and Environment, and neither
+ * special wedge is sandwiched by the same group — a player wedge leads into
+ * each one, an enemy wedge leads out. That falls out of a strict alternation:
+ * no two neighbouring wedges anywhere on the clock belong to the same side.
+ */
+export const WHEEL: readonly WedgeDef[] = [
+  { wedge: 1, type: 'enemy' },
+  { wedge: 2, type: 'player' },
+  { wedge: 3, type: 'status' },
+  { wedge: 4, type: 'enemy' },
+  { wedge: 5, type: 'player' },
+  { wedge: 6, type: 'enemy' },
+  { wedge: 7, type: 'player' },
+  { wedge: 8, type: 'environment' },
+  { wedge: 9, type: 'enemy' },
+  { wedge: 10, type: 'player' },
+] as const;
+
+export const WEDGE_COUNT = 10;
+export const PLAYER_WEDGES = [2, 5, 7, 10];
+export const ENEMY_WEDGES = [1, 4, 6, 9];
+export const SPECIAL_WEDGES = [3, 8];
+
+export function wedgeType(wedge: number): WedgeType {
+  return WHEEL[wedge - 1]?.type ?? 'player';
+}
+
+/** Walk clockwise from the entry wedge. */
+export function wedgeAtStep(entryWedge: number, stepIndex: number): number {
+  return ((entryWedge - 1 + stepIndex) % WEDGE_COUNT) + 1;
+}
+
+export const MAX_CHIPS_PER_PLAYER = PLAYER_WEDGES.length;
+export const MAX_NPC_BATCH = 20;
+export const MAX_NAME_LENGTH = 40;
+export const MAX_NOTE_LENGTH = 40;
+
+/* ------------------------- reaction boxes ------------------------ */
+
+export const REACTION_DIE = 20;
+/**
+ * A reaction of 10 or lower was spent and rerolls when the round ends.
+ * Anything above is still held and is left alone, so a good die is never
+ * taken away by the turn of a round.
+ */
+export const REROLL_AT_OR_BELOW = 10;
+export const MAX_BOX_VALUES = 12;
+export const NEW_BOX_VALUES = 2;
+
+export function rollReaction(): number {
+  return Math.floor(Math.random() * REACTION_DIE) + 1;
+}
+
+/**
+ * Chip faces are tiny, so a name has to survive being cut to a few characters.
+ * "Goblin 3" becomes Go3 — the trailing index is the part that tells two
+ * goblins apart, so it is the one piece that must never be dropped, and two
+ * leading letters keep a Goblin from reading the same as a Gnoll.
+ */
+export function chipAbbrev(displayName: string): string {
+  const name = (displayName || '').trim();
+  if (!name) return '?';
+
+  const numbered = name.match(/^(.*?)[\s#-]*(\d+)$/);
+  if (numbered && numbered[1].trim()) {
+    const base = numbered[1].trim();
+    return base.slice(0, 2).replace(/^./, (c) => c.toUpperCase()) + numbered[2].slice(-2);
+  }
+
+  return name.slice(0, 2).replace(/^./, (c) => c.toUpperCase());
+}
+
+/* ----------------------------- state ----------------------------- */
+
+export type Phase = 'placing' | 'resolving';
+
+export interface Chip {
   id: number;
-  label: string;
-  values: number[];
-  previousValues: number[];
-  position: number;
-  bonus: number | null;
-  armor: number | null;
-  isNpc: boolean;
+  wedge: number;
+  actorKind: 'player' | 'npc';
+  playerId: number | null;
+  npcId: number | null;
+  displayName: string;
+  note: string | null;
+  resolved: boolean;
 }
 
 export interface Player {
   id: number;
   displayName: string;
-  mainTokensUsed: number;
-  customTokensUsed: number;
+  /** null when withheld from this viewer during blind placement */
+  chipsPlaced: number | null;
+  locked: boolean;
   connected: boolean;
 }
 
-export interface QueueToken {
+export interface Npc {
   id: number;
-  displayName: string;
-  kind: TokenKind;
-  playerId: number | null;
-  completed: boolean;
+  name: string;
+  /** null for everyone but the DM — hit points never leave the DM's screen */
+  hp: number | null;
+  maxHp: number | null;
+}
+
+export interface ReactionBox {
+  id: number;
+  label: string;
+  values: number[];
+  /** what this box held before the last round ended */
+  previousValues: number[];
+  bonus: number | null;
+  armor: number | null;
+  /** true when the box was created alongside an enemy and dies with it */
+  isNpc: boolean;
+  position: number;
 }
 
 export interface GameState {
-  currentTurn: number;
-  roundEnded: boolean;
-  roundStarted: boolean;
-  reactionBoxes: ReactionBox[];
+  round: number;
+  phase: Phase;
+  entryWedge: number | null;
+  /** 0..WEDGE_COUNT — equal to WEDGE_COUNT means the rotation is complete */
+  stepIndex: number;
+  revealed: boolean;
   players: Player[];
-  queue: QueueToken[];
+  npcs: Npc[];
+  /** redacted per viewer while placement is blind */
+  chips: Chip[];
+  /** how many chips this viewer is not being shown */
+  hiddenChipCount: number;
   previousNpcNames: string[];
+  reactionBoxes: ReactionBox[];
+  /** enemy chips placed last round, waiting to be dropped back on in one click */
+  previousChipCount: number;
+  /** wedges the Bard's Beat falls on this round */
+  beat: number[];
 }
+
+export const EMPTY_STATE: GameState = {
+  round: 1,
+  phase: 'placing',
+  entryWedge: null,
+  stepIndex: 0,
+  revealed: false,
+  players: [],
+  npcs: [],
+  chips: [],
+  hiddenChipCount: 0,
+  previousNpcNames: [],
+  reactionBoxes: [],
+  previousChipCount: 0,
+  beat: [],
+};
 
 export interface SelfInfo {
   playerId?: number;
@@ -45,12 +173,20 @@ export interface SelfInfo {
   sessionId: string;
 }
 
-// Client → Server events
+/* --------------------------- payloads ---------------------------- */
+
+/**
+ * Three screens, three jobs. The DM's laptop is private and holds everything
+ * secret; the party display is a shared screen everyone can see, so it must
+ * never be told anything the players are not meant to know; a player's phone
+ * is theirs alone and is only touched at the top of a round.
+ */
+export type Role = 'dm' | 'party' | 'player';
 
 export interface HelloPayload {
   name?: string;
-  role: 'dm' | 'player';
-  sessionId?: string; // localStorage fallback
+  role: Role;
+  sessionId?: string;
 }
 
 export interface HelloAck {
@@ -58,13 +194,107 @@ export interface HelloAck {
   sessionId: string;
   playerId?: number;
   isDm: boolean;
+  role: Role;
   state: GameState;
   version: number;
   message?: string;
 }
 
+export interface ChipPlacePayload {
+  wedge: number;
+  note?: string;
+}
+
+export interface DmChipPlacePayload {
+  wedge: number;
+  npcId?: number;
+  playerId?: number;
+  note?: string;
+}
+
+export interface ChipRemovePayload {
+  chipId: number;
+}
+
+export interface NpcAddPayload {
+  name: string;
+  count?: number;
+  hp?: number | null;
+}
+
+export interface NpcRemovePayload {
+  npcId: number;
+}
+
+export interface NpcSetHpPayload {
+  npcId: number;
+  hp?: number | null;
+  maxHp?: number | null;
+}
+
+export interface PlayerAddPayload {
+  name: string;
+}
+
+export interface PlayerRemovePayload {
+  playerId: number;
+}
+
+/** Drop one chip for this actor on a wedge the server picks. */
+export interface DropChipPayload {
+  playerId?: number;
+  npcId?: number;
+}
+
+export interface UndropChipPayload {
+  playerId?: number;
+  npcId?: number;
+}
+
+/**
+ * Which wedge a chip lands on carries no meaning, so the server picks: the
+ * candidate furthest around the dial from that actor's other chips, with a
+ * coin toss between equals. Two chips end up opposite each other, three
+ * spread, and the fourth takes what is left.
+ */
+export function spreadPick(
+  candidates: readonly number[],
+  taken: readonly number[],
+  crowding: (wedge: number) => number,
+  random: () => number = Math.random
+): number | null {
+  if (candidates.length === 0) return null;
+
+  const angle = (w: number) => (w - 1) * (360 / WEDGE_COUNT) + 180 / WEDGE_COUNT;
+  const apart = (a: number, b: number) => {
+    const d = Math.abs(angle(a) - angle(b)) % 360;
+    return Math.min(d, 360 - d);
+  };
+
+  const scored = candidates.map((w) => ({
+    wedge: w,
+    // How far this wedge sits from the actor's nearest existing chip. With no
+    // chips down yet every candidate ties, which makes the first drop random.
+    room: taken.length === 0 ? Infinity : Math.min(...taken.map((t) => apart(w, t))),
+    crowd: crowding(w),
+  }));
+
+  const mostRoom = Math.max(...scored.map((s) => s.room));
+  const roomy = scored.filter((s) => s.room === mostRoom);
+  const leastCrowded = Math.min(...roomy.map((s) => s.crowd));
+  const best = roomy.filter((s) => s.crowd === leastCrowded);
+
+  return best[Math.floor(random() * best.length)].wedge;
+}
+
+export const MAX_HP = 999;
+
+export interface SetEntryPayload {
+  wedge: number;
+}
+
 export interface BoxCreatePayload {
-  label: string;
+  label?: string;
 }
 
 export interface BoxUpdatePayload {
@@ -79,29 +309,25 @@ export interface BoxDeletePayload {
   boxId: number;
 }
 
-export interface AddNpcPayload {
-  name: string;
-  count: number;
+export interface BeatSetPayload {
+  wedges: number[];
 }
 
-export interface AddNpcTokenPayload {
-  boxId: number;
-}
+/** At most 3d10 are ever rolled for the Beat. */
+export const MAX_BEAT_DICE = 3;
 
-export interface AddForPlayerPayload {
-  playerId: number;
-  kind: PlayerTokenKind;
-  name?: string;
-}
-
-export interface TokenRemovePayload {
-  tokenId: number;
-}
-
-export interface PlayerTokenAddPayload {
-  kind: PlayerTokenKind;
-  name?: string;
-}
+/**
+ * Wedges the Beat can land on. Status and Environmental are rerolled, so they
+ * are never legal — derived from the layout rather than hardcoded, so the two
+ * stay in step if the wedges are ever re-cut.
+ */
+export const BEAT_WEDGES: readonly number[] = Array.from(
+  { length: WEDGE_COUNT },
+  (_, i) => i + 1
+).filter((w) => {
+  const t = wedgeType(w);
+  return t !== 'status' && t !== 'environment';
+});
 
 export interface AckPayload {
   ok: boolean;
@@ -113,8 +339,13 @@ export interface StateUpdatePayload {
   version: number;
 }
 
-export interface TurnNewPayload {
-  turn: number;
+export interface RoundNewPayload {
+  round: number;
+}
+
+export interface WedgeReachedPayload {
+  wedge: number;
+  type: WedgeType;
 }
 
 export interface ErrorPayload {
@@ -122,38 +353,52 @@ export interface ErrorPayload {
   message: string;
 }
 
-// Event name constants
+/* ---------------------------- events ----------------------------- */
+
 export const C2S = {
   HELLO: 'hello',
+
+  PLAYER_CHIP_PLACE: 'player:chip:place',
+  PLAYER_CHIP_REMOVE: 'player:chip:remove',
+  PLAYER_LOCK_IN: 'player:lockIn',
+  PLAYER_UNLOCK: 'player:unlock',
+
+  DM_CHIP_PLACE: 'dm:chip:place',
+  DM_CHIP_REMOVE: 'dm:chip:remove',
+  DM_NPC_ADD: 'dm:npc:add',
+  DM_NPC_REMOVE: 'dm:npc:remove',
+  DM_NPC_SET_HP: 'dm:npc:setHp',
+
+  DM_PLAYER_ADD: 'dm:player:add',
+  DM_PLAYER_REMOVE: 'dm:player:remove',
+  DM_DROP_CHIP: 'dm:chip:drop',
+  DM_UNDROP_CHIP: 'dm:chip:undrop',
+  DM_COPY_PREVIOUS_NPCS: 'dm:copyPreviousNpcs',
+  DM_REPEAT_CHIPS: 'dm:repeatChips',
+
+  BEAT_SET: 'beat:set',
+  BEAT_CLEAR: 'beat:clear',
+
   DM_BOX_CREATE: 'dm:box:create',
   DM_BOX_UPDATE: 'dm:box:update',
   DM_BOX_DELETE: 'dm:box:delete',
-  DM_NPC_ADD: 'dm:npc:add',
-  DM_NPC_TOKEN_ADD: 'dm:npc:token:add',
-  DM_TOKEN_ADD_FOR_PLAYER: 'dm:token:addForPlayer',
+  DM_REVEAL: 'dm:reveal',
+  DM_ROLL_ENTRY: 'dm:rollEntry',
+  DM_SET_ENTRY: 'dm:setEntry',
   DM_ADVANCE: 'dm:advance',
-  DM_TOKEN_REMOVE: 'dm:token:remove',
+  DM_BACK: 'dm:back',
   DM_END_ROUND: 'dm:endRound',
-  DM_START_ROUND: 'dm:startRound',
   DM_NEW_COMBAT: 'dm:newCombat',
   DM_NEW_SESSION: 'dm:newSession',
-  DM_COPY_PREVIOUS_NPCS: 'dm:copyPreviousNpcs',
   DM_UNDO: 'dm:undo',
-  PLAYER_TOKEN_ADD: 'player:token:add',
-  PLAYER_TOKEN_REMOVE: 'player:token:remove',
 } as const;
 
 export const S2C = {
   STATE_UPDATE: 'state:update',
-  TURN_NEW: 'turn:new',
+  ROUND_NEW: 'round:new',
   SELF_UPDATE: 'self:update',
-  YOUR_TURN: 'your:turn',
+  YOUR_WEDGE: 'your:wedge',
+  WEDGE_REACHED: 'wedge:reached',
   SESSION_RESET: 'session:reset',
   ERROR: 'error',
 } as const;
-
-export const MAX_MAIN_TOKENS = 4;
-export const MAX_CUSTOM_TOKENS = 4;
-// Bonus tokens are unlimited
-export const MAX_NPC_BATCH = 20;
-export const MAX_NAME_LENGTH = 40;

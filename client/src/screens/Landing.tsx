@@ -1,24 +1,29 @@
 import { useState } from 'react';
+import type { Role } from '../shared/types';
 
 interface Props {
-  onJoin: (role: 'dm' | 'player', name?: string) => void;
+  onJoin: (role: Role, name?: string) => void;
+  onClasses: () => void;
   error: string;
 }
 
-export default function Landing({ onJoin, error }: Props) {
+export default function Landing({ onJoin, onClasses, error }: Props) {
   const [name, setName] = useState('');
 
   return (
     <div className="landing">
-      <h1>Kahoot but for Drew's System</h1>
-      <p className="subtitle">Initiative & Reaction Tracker</p>
+      <h1>The Clock</h1>
+      <p className="subtitle">Terra initiative tracker</p>
 
       <div className="landing-actions">
-        <button
-          className="btn btn-primary btn-large"
-          onClick={() => onJoin('dm')}
-        >
-          I'm the DM
+        <button className="btn btn-large role-btn" onClick={() => onJoin('dm')}>
+          <span className="role-btn-name">I'm the DM</span>
+          <span className="role-btn-note">Your laptop. Hit points and enemies — keep it hidden.</span>
+        </button>
+
+        <button className="btn btn-large role-btn" onClick={() => onJoin('party')}>
+          <span className="role-btn-name">Party screen</span>
+          <span className="role-btn-note">The shared display. Clock and reactions, nothing secret.</span>
         </button>
 
         <div className="divider">or</div>
@@ -31,12 +36,12 @@ export default function Landing({ onJoin, error }: Props) {
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && name.trim() && onJoin('player', name.trim())}
             maxLength={40}
-            autoCapitalize="off"
+            autoCapitalize="words"
             autoCorrect="off"
             spellCheck={false}
           />
           <button
-            className="btn btn-secondary btn-large"
+            className="btn btn-primary btn-large"
             onClick={() => name.trim() && onJoin('player', name.trim())}
             disabled={!name.trim()}
           >
@@ -46,6 +51,10 @@ export default function Landing({ onJoin, error }: Props) {
       </div>
 
       {error && <p className="error-text">{error}</p>}
+
+      <button className="btn btn-ghost btn-small landing-classes" onClick={onClasses}>
+        Class trackers
+      </button>
     </div>
   );
 }

@@ -1,10 +1,12 @@
 import { io, Socket } from 'socket.io-client';
 import { useStore } from './store';
-import { S2C, type HelloPayload, type HelloAck, type StateUpdatePayload, type TurnNewPayload } from './shared/types';
+import { S2C, type HelloPayload, type HelloAck, type StateUpdatePayload } from './shared/types';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
 let socket: Socket | null = null;
+/** The identity to re-send whenever the socket comes back up. */
+let lastHello: HelloPayload | null = null;
 
 export function getSocket(): Socket | null {
   return socket;
@@ -45,6 +47,10 @@ export function connectSocket() {
 
   socket.on('connect', () => {
     useStore.setState({ connected: true });
+    // A reconnect gives us a brand new socket on the server, one that has no
+    // idea which player it belongs to. Re-identify immediately, or placements
+    // silently go nowhere and our own chips get redacted out of our own view.
+    if (lastHello) emitHello(lastHello);
   });
 
   socket.on('disconnect', () => {
@@ -55,11 +61,11 @@ export function connectSocket() {
     useStore.getState().applyState(data.state, data.version);
   });
 
-  socket.on(S2C.TURN_NEW, (_data: TurnNewPayload) => {
-    // Turn change handled by state diff in applyState
+  socket.on(S2C.ROUND_NEW, () => {
+    // Round change is picked up from the state diff in applyState.
   });
 
-  socket.on(S2C.YOUR_TURN, () => {
+  socket.on(S2C.YOUR_WEDGE, () => {
     try {
       if ('vibrate' in navigator) navigator.vibrate(200);
     } catch {}
@@ -75,12 +81,18 @@ export function connectSocket() {
     window.location.reload();
   });
 
-  socket.on('error', (data: { code: string; message: string }) => {
+  socket.on(S2C.ERROR, (data: { code: string; message: string }) => {
     console.error('Server error:', data.code, data.message);
+    useStore.getState().setError(data.message);
+    setTimeout(() => {
+      if (useStore.getState().errorText === data.message) {
+        useStore.getState().setError(null);
+      }
+    }, 4000);
   });
 }
 
-export function sendHello(payload: HelloPayload, onAck: (ack: HelloAck) => void) {
+function emitHello(payload: HelloPayload, onAck?: (ack: HelloAck) => void) {
   const s = getSocket();
   if (!s) return;
 
@@ -88,6 +100,8 @@ export function sendHello(payload: HelloPayload, onAck: (ack: HelloAck) => void)
 
   s.emit('hello', { ...payload, sessionId: fallbackSid }, (ack: HelloAck) => {
     if (ack.ok) {
+      lastHello = payload;
+
       localStorage.setItem('drews-session', JSON.stringify({
         sessionId: ack.sessionId,
         role: payload.role,
@@ -101,6 +115,15 @@ export function sendHello(payload: HelloPayload, onAck: (ack: HelloAck) => void)
       });
       useStore.getState().applyState(ack.state, ack.version);
     }
-    onAck(ack);
+    onAck?.(ack);
   });
+}
+
+export function sendHello(payload: HelloPayload, onAck: (ack: HelloAck) => void) {
+  emitHello(payload, onAck);
+}
+
+/** Stop rejoining on reconnect — the user has left on purpose. */
+export function clearHello() {
+  lastHello = null;
 }

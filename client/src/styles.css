@@ -198,6 +198,15 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -2
   padding: 2px;
 }
 .value-chip-max { outline: 2px solid var(--accent); }
+/* Fires on every reroll, including one that lands on the same number, so a
+   click is never mistaken for a dead button. Colour rather than movement,
+   and it fades out slowly enough to catch out of the corner of an eye. */
+.value-chip-rolling { animation: die-rolled 1.1s ease-out; }
+@keyframes die-rolled {
+  0%   { background: var(--accent); }
+  15%  { background: var(--accent); }
+  100% { background: var(--bg-elevated); }
+}
 .value-num { padding: 0 4px; font-size: 14px; min-width: 24px; text-align: center; }
 .adj-btn {
   background: transparent;
@@ -411,24 +420,10 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -2
   justify-content: center;
 }
 .value-num-reroll .value-num-text { font-size: 14px; }
-.value-num-reroll .value-num-hint {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--accent);
-  background: var(--bg-elevated);
-  border-radius: 4px;
-  opacity: 0;
-  transition: opacity 0.1s;
-  pointer-events: none;
-}
-.value-num-reroll:hover .value-num-text { opacity: 0; }
-.value-num-reroll:hover .value-num-hint { opacity: 1; }
+/* The number stays visible on hover. It used to be swapped out for the word
+   "reroll", which meant that right after clicking — cursor still on the die —
+   the one thing you wanted to read was the one thing covered up. */
+.value-num-reroll:hover { box-shadow: inset 0 0 0 2px var(--accent); border-radius: 4px; }
 .value-chip-max .value-num-reroll .value-num-text { font-weight: 700; font-size: 18px; color: var(--accent); }
 
 /* Turns-remaining table */
@@ -484,4 +479,664 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -2
   color: var(--accent);
   min-width: 20px;
   text-align: right;
+}
+
+/* ================================================================== *
+ *  THE CLOCK
+ *  A brass-cased dial with an ivory face. It keeps its own palette
+ *  regardless of page theme — it is the focal point, and the chip
+ *  colours come off the physical set.
+ * ================================================================== */
+
+.clock {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+}
+.clock svg { width: 100%; height: auto; display: block; }
+
+.clock-case { fill: #8a6d3f; }
+.clock-bezel { fill: #c9a468; }
+.clock-dial { fill: #f2ece0; }
+
+.clock-tick { stroke: #2b2620; stroke-width: 2; opacity: 0.75; }
+.clock-subtick { stroke: #2b2620; stroke-width: 0.8; opacity: 0.3; }
+
+.hour-band {
+  stroke: #f2ece0;
+  stroke-width: 1;
+  opacity: 0.62;
+  transition: opacity 0.18s ease, stroke 0.18s ease;
+}
+.hour-dim .hour-band { opacity: 0.18; }
+.hour-dim .hour-num { opacity: 0.3; }
+.hour-live .hour-band { cursor: pointer; opacity: 0.78; }
+.hour-live .hour-band:hover { opacity: 1; }
+.hour-live .hour-band:focus-visible {
+  outline: none;
+  stroke: #8a6d3f;
+  stroke-width: 3;
+  opacity: 1;
+}
+.hour-current .hour-band { opacity: 1; stroke: #8a6d3f; stroke-width: 2.5; }
+
+.hour-num {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 19px;
+  font-weight: 600;
+  fill: #2b2620;
+  pointer-events: none;
+}
+
+.hour-label {
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-size: 8.5px;
+  letter-spacing: 1.4px;
+  font-weight: 600;
+  fill: #2b2620;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* The Beat: a note pinned to each wedge it falls on, and the chapter ring
+   picked out so it carries to a screen across the room. */
+.hour-beat .hour-band { stroke: #e94560; stroke-width: 3; opacity: 1; }
+.beat-mark-disc { fill: #e94560; stroke: #f2ece0; stroke-width: 1.5; }
+.beat-mark-note {
+  font-size: 13px;
+  font-weight: 700;
+  fill: #f2ece0;
+  pointer-events: none;
+}
+.beat-mark { animation: chip-pop 0.25s ease-out; }
+
+.chip-face {
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-weight: 700;
+  pointer-events: none;
+}
+.chip { animation: chip-pop 0.18s ease-out; }
+.chip-resolved { opacity: 0.32; }
+@keyframes chip-pop { from { opacity: 0; } to { opacity: 1; } }
+
+.chip-overflow {
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  fill: #2b2620;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.clock-hand {
+  transition: transform 0.55s cubic-bezier(0.34, 0.02, 0.2, 1);
+  pointer-events: none;
+}
+.clock-hand path, .clock-hand circle { fill: #2b2620; }
+.clock-hour-hand {
+  transition: transform 0.75s cubic-bezier(0.34, 0.02, 0.2, 1);
+  pointer-events: none;
+}
+.clock-hour-hand path { fill: #8a6d3f; stroke: #6b5330; stroke-width: 1; }
+.clock-pivot { fill: #8a6d3f; stroke: #2b2620; stroke-width: 1; pointer-events: none; }
+.clock-pivot-cap { fill: #f2ece0; pointer-events: none; }
+
+/* Whoever is up, shown large in the middle of the dial. */
+/* Names, not initials — the middle is the one place there is room to spell
+   them out, so it uses the body sans rather than the chips' monospace. */
+.hub-plate-name {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 600;
+  pointer-events: none;
+}
+.hub-plate-more {
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  fill: #2b2620;
+  opacity: 0.6;
+  pointer-events: none;
+}
+.hub-plate { animation: chip-pop 0.18s ease-out; }
+.hub-special {
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-size: 15px;
+  letter-spacing: 2.6px;
+  font-weight: 700;
+  fill: #2b2620;
+  opacity: 0.62;
+  pointer-events: none;
+}
+
+.clock-plate {
+  max-width: 520px;
+  margin: 10px auto 0;
+  text-align: center;
+}
+.plate-hidden { font-size: 12px; color: var(--text-muted); font-style: italic; }
+
+@media (prefers-reduced-motion: reduce) {
+  .clock-hand, .clock-hour-hand, .hour-band { transition: none !important; }
+  .chip, .hub-plate { animation: none !important; }
+}
+
+/* ---------------------------- layout ---------------------------- */
+
+.player-view, .dm-view { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+
+.dm-header {
+  display: flex; align-items: center; gap: 12px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--border);
+}
+.dm-header h2 { flex: 0 0 auto; }
+.dm-phase {
+  flex: 1;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.dm-columns { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+/* The enemy roster is the DM's working surface, so it gets the room. The
+   clock here is a reference — the table is looking at the big one. */
+.dm-clock-col { flex: 0 1 380px; min-width: 300px; display: flex; flex-direction: column; gap: 14px; }
+.dm-side-col { flex: 2 1 520px; min-width: 300px; display: flex; flex-direction: column; gap: 14px; }
+
+.dm-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.dm-panel h3 { font-size: 14px; margin-bottom: 8px; }
+
+.dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.dot-enemy { background: #8c302b; }
+.muted { color: var(--text-muted); font-size: 13px; }
+
+.dm-add-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.dm-add-row input { flex: 1; min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 14px; }
+.npc-count { flex: 0 0 64px !important; }
+
+.dm-controls { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.dm-button-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.dm-button-row .btn { flex: 1 1 auto; }
+.dm-manual-entry { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+
+.now-card {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  padding: 12px 14px;
+}
+.now-kind { font-size: 11px; letter-spacing: 1.8px; text-transform: uppercase; color: var(--text-muted); }
+.now-body { font-size: 14px; margin-top: 4px; }
+.occ-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.occ-pill { border: 2px solid var(--border); border-radius: 999px; padding: 3px 10px; font-size: 13px; }
+
+.hint-text { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+.your-wedge-banner {
+  background: var(--accent); color: #fff;
+  padding: 14px; border-radius: var(--radius);
+  text-align: center; font-size: 17px; font-weight: 600;
+}
+
+/* ======================= class hub / the Bard ======================= */
+
+:root {
+  --heroic: #c9963f;
+  --heroic-soft: #f7efdd;
+  --violent: #b0524a;
+  --violent-soft: #f8e6e3;
+  --somber: #5f7d94;
+  --somber-soft: #e5edf3;
+  --tone-any: #7b7f88;
+  --tone-any-soft: #eef0f2;
+}
+
+.hub-view, .bard-view {
+  flex: 1;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 1180px;
+  width: 100%;
+  margin: 0 auto;
+}
+.hub-header { display: flex; align-items: center; gap: 12px; }
+.hub-header h1 {
+  flex: 1;
+  text-align: center;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.7rem;
+}
+.hub-header-spacer { flex: 0 0 64px; }
+.landing-classes { margin-top: 28px; color: var(--text-muted); }
+
+.class-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.class-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.class-card:hover { background: var(--bg-elevated); }
+.class-card-bard { border-left-color: var(--heroic); }
+.class-name { font-family: Georgia, serif; font-size: 1.25rem; font-weight: 600; }
+.class-blurb { font-size: 13px; color: var(--text-muted); line-height: 1.45; }
+
+/* The song sits above its Phrases and tints to match the current Mood. */
+.song-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-top: 4px solid var(--tone-any);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  transition: border-color 0.25s, background 0.25s;
+}
+.song-heroic { border-top-color: var(--heroic); background: var(--heroic-soft); }
+.song-violent { border-top-color: var(--violent); background: var(--violent-soft); }
+.song-somber { border-top-color: var(--somber); background: var(--somber-soft); }
+
+/* Generous gaps and a rule between dials: with three steppers in a row, an
+   arrow needs to obviously belong to the number it sits beside. */
+.song-dial {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 128px;
+  padding: 0 18px;
+  border-right: 1px solid rgba(0, 0, 0, 0.09);
+}
+.song-label {
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: 2.2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.song-stepper { display: flex; align-items: center; gap: 8px; }
+.step-btn {
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text);
+  border-radius: 6px;
+  width: 34px;
+  height: 34px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.step-btn:hover:not(:disabled) { background: var(--bg-elevated); }
+.step-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.song-value {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.8rem;
+  font-weight: 600;
+  min-width: 66px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.song-value-mood { font-size: 1.25rem; min-width: 92px; white-space: nowrap; }
+.song-note { font-size: 11px; color: var(--text-muted); }
+
+.song-beat {
+  flex: 1 1 220px;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+  padding-left: 18px;
+}
+.song-beat p { font-size: 14px; line-height: 1.45; }
+
+.beat-roller { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.beat-roll { white-space: nowrap; }
+.beat-dice { display: flex; gap: 6px; }
+.beat-die {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 38px;
+  height: 38px;
+  padding: 0 6px;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.2rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.beat-rolled .beat-die { animation: beat-rolled 0.9s ease-out; }
+@keyframes beat-rolled {
+  0%   { background: var(--accent); color: #fff; border-color: var(--accent); }
+  25%  { background: var(--accent); color: #fff; border-color: var(--accent); }
+  100% { background: var(--bg-surface); color: inherit; }
+}
+.beat-stale { font-size: 11.5px; color: var(--text-muted); font-style: italic; margin-top: 6px; }
+
+.bard-hint { margin-top: -4px; }
+
+.phrase-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+
+/* A card is a button: whole-card tap target, generous on a phone. */
+.phrase-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-left: 5px solid var(--tone-any);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  color: var(--text);
+  padding: 13px 15px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.2s, box-shadow 0.2s, transform 0.08s;
+}
+.phrase-card:active { transform: scale(0.985); }
+
+.phrase-head { display: flex; flex-direction: column; gap: 2px; }
+.phrase-name { font-family: Georgia, 'Times New Roman', serif; font-size: 1.08rem; line-height: 1.25; font-weight: 600; }
+.phrase-tag {
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.phrase-effect { font-size: 13.5px; line-height: 1.5; }
+
+/* Tempo riders sit apart from the effect — they only fire at some Tempos, and
+   scanning for "does this apply right now" is most of what happens mid-turn. */
+.phrase-rider {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.045);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.rider-at {
+  flex: 0 0 auto;
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--text);
+  opacity: 0.75;
+}
+.rider-then { flex: 1; }
+
+.phrase-note { font-size: 11.5px; font-style: italic; color: var(--text-muted); }
+
+/* What playing it does to the song, kept as its own strip along the bottom. */
+.phrase-deltas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 2px;
+  padding-top: 9px;
+  border-top: 1px dashed var(--border);
+}
+.delta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+.delta-mood { background: rgba(0, 0, 0, 0.07); }
+.delta-tempo { background: #e8e2f2; color: #4a3c63; }
+.delta-volume { background: #dfeae6; color: #2f5a4c; }
+.delta-at { font-style: normal; font-weight: 400; opacity: 0.65; font-size: 10.5px; }
+
+.tone-heroic { border-left-color: var(--heroic); }
+.tone-violent { border-left-color: var(--violent); }
+.tone-somber { border-left-color: var(--somber); }
+.tone-any, .tone-none { border-left-color: var(--tone-any); }
+
+/* Playable now: lifted and tinted. Everything else recedes but stays readable
+   and tappable, because the card you cannot play is often the one you are
+   steering towards — and because sometimes the song needs correcting by hand. */
+.phrase-live { box-shadow: 0 2px 10px rgba(0, 0, 0, 0.09); }
+.phrase-live.tone-heroic { background: var(--heroic-soft); border-color: var(--heroic); }
+.phrase-live.tone-violent { background: var(--violent-soft); border-color: var(--violent); }
+.phrase-live.tone-somber { background: var(--somber-soft); border-color: var(--somber); }
+.phrase-live.tone-any { background: var(--tone-any-soft); border-color: var(--tone-any); }
+.phrase-idle { opacity: 0.48; }
+.phrase-idle:hover { opacity: 0.85; }
+
+.phrase-played { animation: phrase-played 0.9s ease-out; }
+@keyframes phrase-played {
+  0%   { box-shadow: 0 0 0 3px var(--accent); }
+  20%  { box-shadow: 0 0 0 3px var(--accent); }
+  100% { box-shadow: 0 0 0 3px rgba(233, 69, 96, 0); }
+}
+
+.dial-moved .song-value { animation: dial-moved 0.9s ease-out; border-radius: 6px; }
+@keyframes dial-moved {
+  0%   { background: var(--accent); color: #fff; }
+  25%  { background: var(--accent); color: #fff; }
+  100% { background: transparent; color: inherit; }
+}
+
+.song-ended, .song-open {
+  padding: 9px 13px;
+  border-radius: var(--radius);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.song-ended { background: rgba(231, 76, 60, 0.13); border: 1px solid var(--danger); }
+.song-open { background: var(--tone-any-soft); border: 1px solid var(--tone-any); }
+
+/* On a phone the three dials will not sit in a row without the Mood name
+   being crushed, so Mood takes its own line and the two numbers share one. */
+@media (max-width: 640px) {
+  .hub-view, .bard-view { padding: 12px; gap: 12px; }
+  .song-bar { gap: 10px; padding: 12px; }
+
+  .song-dial {
+    flex: 1 1 40%;
+    min-width: 0;
+    padding: 0;
+    border-right: none;
+  }
+  .song-dial-mood {
+    flex: 1 1 100%;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.09);
+  }
+  .song-stepper { gap: 6px; }
+  .step-btn { width: 40px; height: 40px; }
+  .song-value { font-size: 1.55rem; min-width: 0; flex: 1; }
+  .song-value-mood { font-size: 1.35rem; min-width: 0; }
+
+  .song-beat {
+    flex: 1 1 100%;
+    padding-left: 0;
+    padding-top: 10px;
+    border-top: 1px solid rgba(0, 0, 0, 0.09);
+  }
+
+  .phrase-grid { grid-template-columns: 1fr; }
+  .phrase-card { padding: 14px; }
+  .phrase-name { font-size: 1.12rem; }
+  .phrase-effect { font-size: 14px; }
+}
+
+/* ---------------------- role picker (landing) ---------------------- */
+
+.role-btn {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  text-align: left;
+  padding: 14px 18px;
+}
+.role-btn-name { font-size: 16px; font-weight: 600; }
+.role-btn-note { font-size: 12px; color: var(--text-muted); line-height: 1.35; }
+
+/* ------------------------- DM: enemies + HP ------------------------ */
+
+/* The DM's clock is a reference, not the centrepiece — the table has the big one. */
+.dm-clock-small .clock { max-width: 320px; }
+
+/* Rosters the DM mashes: the name itself is the button that drops a chip. */
+.actor-list { list-style: none; display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.actor-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  background: var(--bg-surface);
+}
+.actor-row.actor-down { opacity: 0.55; }
+.actor-top { display: flex; align-items: center; gap: 4px; }
+
+.actor-drop {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  color: var(--text);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  transition: background 0.12s, transform 0.06s;
+}
+.actor-drop:hover:not(:disabled) { background: var(--bg-elevated); }
+.actor-drop:active:not(:disabled) { transform: scale(0.98); background: var(--accent); color: #fff; }
+.actor-drop:disabled { opacity: 0.45; cursor: not-allowed; }
+.actor-name { flex: 1; }
+.actor-chips {
+  min-width: 22px;
+  text-align: center;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.actor-drop:disabled .actor-chips { color: var(--text-muted); }
+
+.enemy-hp { display: flex; align-items: center; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+.hp-input {
+  width: 48px !important;
+  min-height: 32px !important;
+  padding: 3px 4px !important;
+  font-size: 13px !important;
+  text-align: center;
+}
+.hp-slash { color: var(--text-muted); font-size: 13px; }
+.hp-bar {
+  flex: 1 1 60px;
+  min-width: 50px;
+  max-width: 160px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+.hp-bar-fill { height: 100%; background: var(--danger); transition: width 0.2s ease; }
+.enemy-down-tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  color: var(--danger);
+  font-weight: 700;
+}
+
+/* --------------------------- party screen -------------------------- */
+
+.party-view { flex: 1; display: flex; flex-direction: column; padding: 20px 24px; gap: 16px; }
+.party-header { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
+.party-header h1 { font-family: Georgia, 'Times New Roman', serif; font-size: 2.1rem; }
+.party-status { flex: 1; font-size: 15px; color: var(--text-muted); }
+.party-leave { opacity: 0.4; }
+.party-leave:hover { opacity: 1; }
+
+.party-body { flex: 1; display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
+.party-clock { flex: 2 1 460px; min-width: 320px; }
+.party-clock .clock { max-width: 640px; }
+.party-side { flex: 1 1 260px; min-width: 240px; display: flex; flex-direction: column; gap: 16px; }
+
+.party-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.party-panel h2 {
+  font-size: 12px;
+  letter-spacing: 2.2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+.party-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.party-list li { display: flex; align-items: baseline; gap: 10px; font-size: 17px; }
+.party-list .party-name { flex: 1; }
+.party-list .party-lock { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1.2px; }
+.party-away { opacity: 0.45; }
+.party-boxes { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+
+.dm-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.dm-panel-head h3 { margin: 0; }
+.dm-panel .boxes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+@media (max-width: 640px) {
+  .dm-columns { flex-direction: column; }
+  .dm-clock-col, .dm-side-col { width: 100%; }
+  .party-body { flex-direction: column; }
+  .party-clock, .party-side { width: 100%; }
 }

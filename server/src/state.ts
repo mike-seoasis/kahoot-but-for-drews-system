@@ -1,22 +1,36 @@
 import pg from 'pg';
 import type { Server } from 'socket.io';
-import type { GameState } from './shared/types.js';
+import type { GameState, Chip, Phase, ReactionBox } from './shared/types.js';
 
 export async function loadGameState(client: pg.PoolClient, io?: Server): Promise<GameState> {
-  const gsResult = await client.query('SELECT current_turn, round_ended, round_started, previous_npc_names FROM game_state WHERE id = 1');
+  const gsResult = await client.query(
+    `SELECT current_turn, phase, entry_wedge, step_index, revealed,
+            previous_npc_names, previous_chips, beat
+       FROM game_state WHERE id = 1`
+  );
   const gs = gsResult.rows[0];
 
   const boxesResult = await client.query(
-    'SELECT id, label, values, previous_values, position, bonus, armor, is_npc FROM reaction_boxes ORDER BY position'
+    `SELECT id, label, values, previous_values, bonus, armor, is_npc, position
+       FROM reaction_boxes ORDER BY position, id`
   );
 
   const playersResult = await client.query(
-    'SELECT id, display_name, session_id, main_tokens_used, custom_tokens_used FROM players ORDER BY id'
+    'SELECT id, display_name, session_id, locked FROM players ORDER BY id'
   );
 
-  const queueResult = await client.query(
-    'SELECT id, display_name, kind, player_id, completed FROM initiative_tokens ORDER BY position, id'
+  const npcsResult = await client.query(
+    'SELECT id, name, hp, max_hp FROM npcs ORDER BY position, id'
   );
+
+  const chipsResult = await client.query(`
+    SELECT c.id, c.wedge, c.actor_kind, c.player_id, c.npc_id, c.note, c.resolved,
+           COALESCE(p.display_name, n.name) AS display_name
+      FROM wheel_chips c
+      LEFT JOIN players p ON p.id = c.player_id
+      LEFT JOIN npcs    n ON n.id = c.npc_id
+     ORDER BY c.wedge, c.id
+  `);
 
   const connectedSessionIds = new Set<string>();
   if (io) {
@@ -26,84 +40,202 @@ export async function loadGameState(client: pg.PoolClient, io?: Server): Promise
     }
   }
 
+  const chips: Chip[] = chipsResult.rows.map((r: any) => ({
+    id: r.id,
+    wedge: r.wedge,
+    actorKind: r.actor_kind,
+    playerId: r.player_id,
+    npcId: r.npc_id,
+    displayName: r.display_name ?? '?',
+    note: r.note,
+    resolved: r.resolved,
+  }));
+
+  const chipCountByPlayer = new Map<number, number>();
+  for (const c of chips) {
+    if (c.playerId != null) {
+      chipCountByPlayer.set(c.playerId, (chipCountByPlayer.get(c.playerId) ?? 0) + 1);
+    }
+  }
+
   return {
-    currentTurn: gs.current_turn,
-    roundEnded: gs.round_ended,
-    roundStarted: gs.round_started,
-    reactionBoxes: boxesResult.rows.map(r => ({
-      id: r.id,
-      label: r.label,
-      values: r.values,
-      previousValues: r.previous_values,
-      position: r.position,
-      bonus: r.bonus,
-      armor: r.armor,
-      isNpc: r.is_npc,
-    })),
-    players: playersResult.rows.map(r => ({
+    round: gs.current_turn,
+    phase: gs.phase as Phase,
+    entryWedge: gs.entry_wedge,
+    stepIndex: gs.step_index,
+    revealed: gs.revealed,
+    players: playersResult.rows.map((r: any) => ({
       id: r.id,
       displayName: r.display_name,
-      mainTokensUsed: r.main_tokens_used,
-      customTokensUsed: r.custom_tokens_used,
+      chipsPlaced: chipCountByPlayer.get(r.id) ?? 0,
+      locked: r.locked,
       connected: connectedSessionIds.has(r.session_id),
     })),
-    queue: queueResult.rows.map(r => ({
+    npcs: npcsResult.rows.map((r: any) => ({
       id: r.id,
-      displayName: r.display_name,
-      kind: r.kind,
-      playerId: r.player_id,
-      completed: r.completed,
+      name: r.name,
+      hp: r.hp,
+      maxHp: r.max_hp,
     })),
+    chips,
+    hiddenChipCount: 0,
     previousNpcNames: gs.previous_npc_names ?? [],
+    reactionBoxes: boxesResult.rows.map(
+      (r: any): ReactionBox => ({
+        id: r.id,
+        label: r.label,
+        values: r.values ?? [],
+        previousValues: r.previous_values ?? [],
+        bonus: r.bonus,
+        armor: r.armor,
+        isNpc: r.is_npc,
+        position: r.position,
+      })
+    ),
+    beat: gs.beat ?? [],
+    // Only enemies can be re-placed, so only enemies are worth counting.
+    previousChipCount: ((gs.previous_chips ?? []) as Array<{ actor_kind: string }>).filter(
+      (c) => c.actor_kind === 'npc'
+    ).length,
   };
 }
 
+/**
+ * Blind placement and hidden hit points are both enforced here, not in the UI.
+ * The party display is a screen the players are looking at, so it is treated
+ * exactly like a player who owns no chips: it learns how many chips are hidden,
+ * never whose they are.
+ */
+export function redactState(
+  state: GameState,
+  viewer: { playerId?: number; isDm?: boolean }
+): GameState {
+  if (viewer.isDm) return state;
+
+  // Hit points are the DM's alone, whatever else is on show. This has to come
+  // before the revealed check — chips going face up does not publish HP.
+  const npcs = state.npcs.map((n) => ({ ...n, hp: null, maxHp: null }));
+
+  if (state.revealed) return { ...state, npcs };
+
+  const mine = state.chips.filter(
+    (c) => c.actorKind === 'player' && c.playerId === viewer.playerId
+  );
+
+  return {
+    ...state,
+    npcs,
+    chips: mine,
+    hiddenChipCount: state.chips.length - mine.length,
+    players: state.players.map((p) =>
+      p.id === viewer.playerId ? p : { ...p, chipsPlaced: null }
+    ),
+  };
+}
+
+/* ---------------------------- undo ---------------------------- */
+
 export interface DbSnapshot {
-  gameState: { current_turn: number; round_ended: boolean; round_started: boolean; dm_session_id: string | null; version: number };
-  reactionBoxes: Array<{ id: number; label: string; values: number[]; previous_values: number[]; position: number; bonus: number | null; armor: number | null; is_npc: boolean }>;
-  players: Array<{ id: number; display_name: string; session_id: string; main_tokens_used: number; custom_tokens_used: number; last_seen_turn: number }>;
-  tokens: Array<{ id: number; display_name: string; player_id: number | null; kind: string; position: number; completed: boolean }>;
+  gameState: {
+    current_turn: number;
+    phase: string;
+    entry_wedge: number | null;
+    step_index: number;
+    revealed: boolean;
+    dm_session_id: string | null;
+    previous_npc_names: string[];
+    previous_chips: unknown;
+    beat: number[];
+  };
+  players: Array<{ id: number; locked: boolean }>;
+  npcs: Array<{ id: number; name: string; position: number; hp: number | null; max_hp: number | null }>;
+  chips: Array<{
+    id: number;
+    wedge: number;
+    actor_kind: string;
+    player_id: number | null;
+    npc_id: number | null;
+    note: string | null;
+    resolved: boolean;
+  }>;
+  boxes: Array<{
+    id: number;
+    label: string;
+    values: number[];
+    previous_values: number[];
+    bonus: number | null;
+    armor: number | null;
+    is_npc: boolean;
+    position: number;
+  }>;
 }
 
 export async function captureSnapshot(client: pg.PoolClient): Promise<DbSnapshot> {
   const gs = (await client.query('SELECT * FROM game_state WHERE id = 1')).rows[0];
+  const players = (await client.query('SELECT id, locked FROM players ORDER BY id')).rows;
+  const npcs = (await client.query('SELECT id, name, position, hp, max_hp FROM npcs ORDER BY id')).rows;
+  const chips = (await client.query('SELECT * FROM wheel_chips ORDER BY id')).rows;
   const boxes = (await client.query('SELECT * FROM reaction_boxes ORDER BY id')).rows;
-  const players = (await client.query('SELECT * FROM players ORDER BY id')).rows;
-  const tokens = (await client.query('SELECT * FROM initiative_tokens ORDER BY id')).rows;
-  return { gameState: gs, reactionBoxes: boxes, players, tokens };
+  return { gameState: gs, players, npcs, chips, boxes };
 }
 
 export async function restoreSnapshot(client: pg.PoolClient, snap: DbSnapshot): Promise<void> {
-  await client.query('DELETE FROM initiative_tokens');
+  await client.query('DELETE FROM wheel_chips');
+  await client.query('DELETE FROM npcs');
   await client.query('DELETE FROM reaction_boxes');
 
   await client.query(
-    `UPDATE game_state SET current_turn = $1, round_ended = $2, round_started = $3, dm_session_id = $4, version = version + 1 WHERE id = 1`,
-    [snap.gameState.current_turn, snap.gameState.round_ended, snap.gameState.round_started, snap.gameState.dm_session_id]
+    `UPDATE game_state
+        SET current_turn = $1, phase = $2, entry_wedge = $3, step_index = $4,
+            revealed = $5, previous_npc_names = $6, previous_chips = $7,
+            beat = $8, version = version + 1
+      WHERE id = 1`,
+    [
+      snap.gameState.current_turn,
+      snap.gameState.phase,
+      snap.gameState.entry_wedge,
+      snap.gameState.step_index,
+      snap.gameState.revealed,
+      snap.gameState.previous_npc_names ?? [],
+      JSON.stringify(snap.gameState.previous_chips ?? []),
+      snap.gameState.beat ?? [],
+    ]
   );
 
-  for (const b of snap.reactionBoxes) {
+  for (const b of snap.boxes ?? []) {
     await client.query(
-      'INSERT INTO reaction_boxes (id, label, values, previous_values, position, bonus, armor, is_npc) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-      [b.id, b.label, b.values, b.previous_values, b.position, b.bonus, b.armor, b.is_npc]
+      `INSERT INTO reaction_boxes (id, label, values, previous_values, bonus, armor, is_npc, position)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [b.id, b.label, b.values, b.previous_values, b.bonus, b.armor, b.is_npc, b.position]
+    );
+  }
+
+  for (const n of snap.npcs) {
+    await client.query(
+      'INSERT INTO npcs (id, name, position, hp, max_hp) VALUES ($1, $2, $3, $4, $5)',
+      [n.id, n.name, n.position, n.hp, n.max_hp]
     );
   }
 
   for (const p of snap.players) {
+    await client.query('UPDATE players SET locked = $1 WHERE id = $2', [p.locked, p.id]);
+  }
+
+  for (const c of snap.chips) {
     await client.query(
-      'UPDATE players SET main_tokens_used = $1, custom_tokens_used = $2, last_seen_turn = $3 WHERE id = $4',
-      [p.main_tokens_used, p.custom_tokens_used, p.last_seen_turn, p.id]
+      `INSERT INTO wheel_chips (id, wedge, actor_kind, player_id, npc_id, note, resolved)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [c.id, c.wedge, c.actor_kind, c.player_id, c.npc_id, c.note, c.resolved]
     );
   }
 
-  for (const t of snap.tokens) {
-    await client.query(
-      'INSERT INTO initiative_tokens (id, display_name, player_id, kind, position, completed) VALUES ($1, $2, $3, $4, $5, $6)',
-      [t.id, t.display_name, t.player_id, t.kind, t.position, t.completed]
-    );
-  }
-
-  // Reset sequences
-  await client.query("SELECT setval('reaction_boxes_id_seq', COALESCE((SELECT MAX(id) FROM reaction_boxes), 0) + 1, false)");
-  await client.query("SELECT setval('initiative_tokens_id_seq', COALESCE((SELECT MAX(id) FROM initiative_tokens), 0) + 1, false)");
+  await client.query(
+    "SELECT setval('npcs_id_seq', COALESCE((SELECT MAX(id) FROM npcs), 0) + 1, false)"
+  );
+  await client.query(
+    "SELECT setval('wheel_chips_id_seq', COALESCE((SELECT MAX(id) FROM wheel_chips), 0) + 1, false)"
+  );
+  await client.query(
+    "SELECT setval('reaction_boxes_id_seq', COALESCE((SELECT MAX(id) FROM reaction_boxes), 0) + 1, false)"
+  );
 }
